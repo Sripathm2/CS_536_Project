@@ -1,0 +1,12 @@
+./idea
+.vscode/
+./Python_files/__pycache__
+*.pyc
+*.json
+Dataset_files/*.pcap
+*.gz
+*.pcap
+*.pkl
+*.tar
+Processed_files/*
+*.csv
