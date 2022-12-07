@@ -11,3 +11,4 @@ Dataset_files/*.pcap
 Processed_files/*
 *.csv
 env/
+*.out
