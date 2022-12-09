@@ -14,6 +14,8 @@ from scapy.utils import rdpcap
 from multiprocessing import Pool
 from scipy.stats import pearsonr
 sys.path.insert(0, '../Python_files/')
+from collections import defaultdict
+import hashlib
 
 #default_file_to_work_with = '../Dataset_files/10thousand_packets.pcap'
 #default_file_to_work_with = '../Dataset_files/old_10thousand_packets.pcap'
@@ -22,9 +24,17 @@ sys.path.insert(0, '../Python_files/')
 #default_file_to_work_with = '../Dataset_files/10million_packets.pcap'
 #default_file_to_work_with = '../Dataset_files/15million_packets.pcap'
 #default_file_to_work_with = '../Dataset_files/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap.gz'
-default_file_to_work_with = '../Dataset_files/5m_01_28_22.pcap'
+#default_file_to_work_with = '../Dataset_files/5m_01_28_22.pcap'
+default_file_to_work_with = './ucsb.pcap'
 
+trafficCountGroundTrue = defaultdict(int)
+#trafficCountGroundTrue = {}
+trafficCountEstimated = defaultdict(int)
+hashKeyToFlow = defaultdict(set)
 
+targetFlowCount = 100000 ## targetFlowCount can also be changed; To be changed
+percentile = 0.95 ## percentile can change; To be Changed
+percentileCount = targetFlowCount * 0.95
 def process_file_5min(file_to_work_with, output_file, max_limit_of_files):
     dataset_list = []
     count =0
@@ -32,6 +42,10 @@ def process_file_5min(file_to_work_with, output_file, max_limit_of_files):
     ip_counter = 0
     print(file_to_work_with)
     for pkt in PcapReader(file_to_work_with):
+        if count == targetFlowCount: break ### only process certain number of packets
+        
+         
+        #trafficCount = {}
         temp_dict = {'proto':'-1','src':'-1','dst':'-1','sport':'-1','dport':'-1',
             'ip_len':'-1','ip_id':'-1','tcp_ack':'-1',
             'tcp_data_offset':'-1','ip_flags':'-1','tcp_flags':'-1',
@@ -40,6 +54,31 @@ def process_file_5min(file_to_work_with, output_file, max_limit_of_files):
         combined = ''
         if count%10000 == 0:
             print('read ' + str(count))
+            print("pkt.payload.proto", pkt.payload.proto)
+            print("pkt.payload.src", pkt.payload.src)
+            print("pkt.payload.dst", pkt.payload.dst)
+            print("pkt.payload.dport", pkt.payload.dport)
+            print("pkt.payload.ihl", pkt.payload.ihl)
+        #print(type((pkt.payload.src, str(pkt.payload.sport), pkt.payload.dst, str(pkt.payload.dport), str(pkt.payload.proto))))
+        #trafficCount[str(pkt.payload.src) + str(pkt.payload.sport) + str(pkt.payload.dst) + str(pkt.payload.dport) + str(pkt.payload.proto)] += 1
+        if not (hasattr(pkt, 'payload') and hasattr(pkt.payload, 'sport')): continue        
+        if not hasattr(pkt.payload, 'proto'): continue
+        if not (hasattr(pkt, 'payload') and hasattr(pkt.payload, 'dport')): continue
+
+        mysport, mydport, myproto = pkt.payload.sport, str(pkt.payload.dport), str(pkt.payload.proto)
+        newstring = pkt.payload.src + " - " + str(mysport) + pkt.payload.dst + " - " + str(mydport) + " - " + str(myproto) 
+        #print(newstring)
+        trafficCountGroundTrue[newstring] = trafficCountGroundTrue[newstring] + 1 ### record the ground true count
+        newhash = hashlib.sha512(newstring.encode())
+        hexhash = newhash.hexdigest()
+        decimalHash = int(hexhash, 16)
+        #print(type(hexhash))
+        #print(type(decimalHash))
+        modSize = 10000 ### the mod size is 10K now; it can be changed later
+        hashKey = decimalHash % modSize
+        trafficCountEstimated[hashKey] += 1
+        hashKeyToFlow[hashKey].add(newstring)
+
         if count%max_limit_of_files == 0 and count != 0:
            break
         count += 1
@@ -72,7 +111,10 @@ def process_file_5min(file_to_work_with, output_file, max_limit_of_files):
             temp_dict['dst_bin'] = bitarr    
         if hasattr(pkt, 'payload') and hasattr(pkt.payload, 'sport'):
             temp_dict['sport'] = str(pkt.payload.sport)
+            #print("temp_dict['sport']", temp_dict['sport'])
             temp_dict['sport_bin'] = BitArray(uint=int(str(int(pkt.payload.sport))[0:5]), length=16).bin
+            #print("temp_dict['sport_bin']", temp_dict['sport_bin'])
+
         if hasattr(pkt, 'payload') and hasattr(pkt.payload, 'dport'):
             temp_dict['dport'] = str(pkt.payload.dport)
             temp_dict['dport_bin'] = BitArray(uint=int(pkt.payload.dport), length=16).bin
@@ -124,6 +166,50 @@ def process_file_5min(file_to_work_with, output_file, max_limit_of_files):
     df = pd.DataFrame(dataset_list)
     df.to_pickle(output_file)
     print(df)
+
+    #print(trafficCountGroundTrue)
+    GroundTrueCount = []
+    for flow in trafficCountGroundTrue:
+        GroundTrueCount.append([trafficCountGroundTrue[flow], flow])
+
+    EstimatedCount = []
+    # for flow in trafficCountEstimated:
+    #     EstimatedCount.append([trafficCountEstimated[flow], flow])
+
+    for hashKey in hashKeyToFlow:
+        for flow in hashKeyToFlow[hashKey]:
+            EstimatedCount.append([trafficCountEstimated[hashKey], flow])
+
+    GroundTrueCount = sorted(GroundTrueCount, key = lambda x: x[0], reverse = True)
+    EstimatedCount = sorted(EstimatedCount, key = lambda x: x[0], reverse = True)
+
+    GroundTrueSet = set()
+    EstimatedSet = set()
+    currcount1 = 0
+    for count, flow in GroundTrueCount: 
+        currcount1 += count
+        if currcount1 > percentileCount: break
+        else: GroundTrueSet.add(flow)
+
+    currcount2 = 0
+    for count, flow in EstimatedCount: 
+        currcount2 += count
+        if currcount2 > percentileCount: break
+        else: EstimatedSet.add(flow)
+
     
+    #print(GroundTrueCount)
+    #print(EstimatedCount)
+    
+    #print("##############################")
+    #print(GroundTrueSet)
+    #print(EstimatedSet)
+
+    #print("##############################")
+    #print(EstimatedSet.difference(GroundTrueSet))
+
+
+    print("the Accuracy is", 1 - len(EstimatedSet.difference(GroundTrueSet)) / len(GroundTrueSet))
+
 if __name__ == '__main__':
     process_file_5min(default_file_to_work_with, 'Dataset.pkl', 60000000)
