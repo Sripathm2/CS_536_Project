@@ -16,31 +16,73 @@ from scipy.stats import pearsonr
 sys.path.insert(0, '../Python_files/')
 from collections import defaultdict
 import hashlib
+#import matpotlib
+import getopt
+import argparse
+import json
+import zlib
 
-#default_file_to_work_with = '../Dataset_files/10thousand_packets.pcap'
-#default_file_to_work_with = '../Dataset_files/old_10thousand_packets.pcap'
-#default_file_to_work_with = '../Dataset_files/million_packets.pcap'
-#default_file_to_work_with = '../Dataset_files/5million_packets.pcap'
-#default_file_to_work_with = '../Dataset_files/10million_packets.pcap'
-#default_file_to_work_with = '../Dataset_files/15million_packets.pcap'
-#default_file_to_work_with = '../Dataset_files/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap.gz'
-#default_file_to_work_with = '../Dataset_files/5m_01_28_22.pcap'
+parser = argparse.ArgumentParser(
+                    prog = 'ProgramName',
+                    description = 'What the program does',
+                    epilog = 'Text at the bottom of help')
+
+#parser.add_argument('filename')           # positional argument
+parser.add_argument('-hset', '--hashset')      # option that takes a value
+parser.add_argument('-p', '--percentile')      # option that takes a value
+parser.add_argument('-n', '--numflow')      # option that takes a value
+parser.add_argument('-func', '--function')  # on/off flag
+
+args = parser.parse_args()
+print(args.hashset, args.percentile, args.function, args.numflow)
+# #print(args.percentile, args.function, args.numflow)
+# print(type(args.hashset), type(args.percentile), type(args.function), type(args.numflow))
+
 default_file_to_work_with = './ucsb.pcap'
 
 trafficCountGroundTrue = defaultdict(int)
 #trafficCountGroundTrue = {}
 trafficCountEstimated = defaultdict(int)
 hashKeyToFlow = defaultdict(set)
+totalflow = set()
+totalhashkey = set()
 
-targetFlowCount = 100000 ## targetFlowCount can also be changed; To be changed
-percentile = 0.95 ## percentile can change; To be Changed
-percentileCount = targetFlowCount * 0.95
+targetFlowCount = int(args.numflow) ## targetFlowCount can also be changed; To be changed
+modSize = int(args.hashset) ### the mod size is 10K now; it can be changed later
+percentile = float(args.percentile) ## percentile can change; To be Changed
+percentileCount = targetFlowCount * percentile
+
+# print(targetFlowCount, modSize, percentile)
+#exit(1)
+
+
+def udfhash(inputhash, flowString):
+    if inputhash == "sha512":
+        newhash = hashlib.sha512(flowString.encode())
+    elif inputhash == "md5":
+        newhash = hashlib.md5(flowString.encode())
+    elif inputhash == "crc32":
+        newhash = zlib.crc32(flowString.encode())
+
+
+    return newhash
+
+def flowToHashIndex(flowString, modSize):
+    newhash = udfhash(args.function, flowString)
+    #newhash = hashlib.sha512(flowString.encode())
+    hexhash = newhash.hexdigest()
+    decimalHash = int(hexhash, 16)
+    hashKey = decimalHash % modSize
+
+    return hashKey
+
+
 def process_file_5min(file_to_work_with, output_file, max_limit_of_files):
     dataset_list = []
     count =0
     ipv6_handling = {}
     ip_counter = 0
-    print(file_to_work_with)
+    #print(file_to_work_with)
     for pkt in PcapReader(file_to_work_with):
         if count == targetFlowCount: break ### only process certain number of packets
         
@@ -54,30 +96,32 @@ def process_file_5min(file_to_work_with, output_file, max_limit_of_files):
         combined = ''
         if count%10000 == 0:
             print('read ' + str(count))
-            print("pkt.payload.proto", pkt.payload.proto)
-            print("pkt.payload.src", pkt.payload.src)
-            print("pkt.payload.dst", pkt.payload.dst)
-            print("pkt.payload.dport", pkt.payload.dport)
-            print("pkt.payload.ihl", pkt.payload.ihl)
-        #print(type((pkt.payload.src, str(pkt.payload.sport), pkt.payload.dst, str(pkt.payload.dport), str(pkt.payload.proto))))
         #trafficCount[str(pkt.payload.src) + str(pkt.payload.sport) + str(pkt.payload.dst) + str(pkt.payload.dport) + str(pkt.payload.proto)] += 1
         if not (hasattr(pkt, 'payload') and hasattr(pkt.payload, 'sport')): continue        
         if not hasattr(pkt.payload, 'proto'): continue
         if not (hasattr(pkt, 'payload') and hasattr(pkt.payload, 'dport')): continue
 
         mysport, mydport, myproto = pkt.payload.sport, str(pkt.payload.dport), str(pkt.payload.proto)
-        newstring = pkt.payload.src + " - " + str(mysport) + pkt.payload.dst + " - " + str(mydport) + " - " + str(myproto) 
-        #print(newstring)
-        trafficCountGroundTrue[newstring] = trafficCountGroundTrue[newstring] + 1 ### record the ground true count
-        newhash = hashlib.sha512(newstring.encode())
-        hexhash = newhash.hexdigest()
-        decimalHash = int(hexhash, 16)
+        flowstring = pkt.payload.src + " - " + str(mysport) + " - " + pkt.payload.dst + " - " + str(mydport) + " - " + str(myproto) 
+        totalflow.add(flowstring)
+        #print(flowstring)
+        trafficCountGroundTrue[flowstring] = trafficCountGroundTrue[flowstring] + 1 ### record the ground true count
+        newhash = udfhash(args.function, flowstring)
+        #newhash = hashlib.sha512(flowstring.encode())
+        if args.function == "md5" or args.function == "sha512":
+            hexhash = newhash.hexdigest()
+            decimalHash = int(hexhash, 16)
+            #print("decimalHash is ", decimalHash)
+
+        else:
+            decimalHash = newhash
+            #print("decimalHash is ", decimalHash)
+        totalhashkey.add(decimalHash)
         #print(type(hexhash))
         #print(type(decimalHash))
-        modSize = 10000 ### the mod size is 10K now; it can be changed later
         hashKey = decimalHash % modSize
         trafficCountEstimated[hashKey] += 1
-        hashKeyToFlow[hashKey].add(newstring)
+        hashKeyToFlow[hashKey].add(flowstring)
 
         if count%max_limit_of_files == 0 and count != 0:
            break
@@ -165,7 +209,7 @@ def process_file_5min(file_to_work_with, output_file, max_limit_of_files):
     len(dataset_list)
     df = pd.DataFrame(dataset_list)
     df.to_pickle(output_file)
-    print(df)
+    #print(df)
 
     #print(trafficCountGroundTrue)
     GroundTrueCount = []
@@ -173,12 +217,17 @@ def process_file_5min(file_to_work_with, output_file, max_limit_of_files):
         GroundTrueCount.append([trafficCountGroundTrue[flow], flow])
 
     EstimatedCount = []
-    # for flow in trafficCountEstimated:
-    #     EstimatedCount.append([trafficCountEstimated[flow], flow])
 
-    for hashKey in hashKeyToFlow:
-        for flow in hashKeyToFlow[hashKey]:
-            EstimatedCount.append([trafficCountEstimated[hashKey], flow])
+    #for hashKey in hashKeyToFlow:
+    #    for flow in hashKeyToFlow[hashKey]:
+    #        EstimatedCount.append([trafficCountEstimated[hashKey], flow])
+    # for hashKey in trafficCountEstimated:
+    #     EstimatedCount.append([trafficCountEstimated[hashKey], hashKey])
+
+
+    for hashkey in trafficCountEstimated:
+        for flowstring in hashKeyToFlow[hashkey]:
+            EstimatedCount.append([trafficCountEstimated[hashkey], flowstring])
 
     GroundTrueCount = sorted(GroundTrueCount, key = lambda x: x[0], reverse = True)
     EstimatedCount = sorted(EstimatedCount, key = lambda x: x[0], reverse = True)
@@ -191,25 +240,56 @@ def process_file_5min(file_to_work_with, output_file, max_limit_of_files):
         if currcount1 > percentileCount: break
         else: GroundTrueSet.add(flow)
 
+    # GroundTrueHashIndex = set()
+    # for flow in GroundTrueSet:
+    #     key = flowToHashIndex(flow, modSize)
+    #     GroundTrueHashIndex.add(key)
+
+    # currcount2 = 0
+    # for count, key in EstimatedCount: 
+    #     currcount2 += count
+    #     if currcount2 > percentileCount: break
+    #     else: EstimatedSet.add(key)
+
+    totalEstimatedCount = 0
+    for count,flow in EstimatedCount:
+        totalEstimatedCount += count
+    
+    EstimatedPercentileCount = totalEstimatedCount * percentile
     currcount2 = 0
     for count, flow in EstimatedCount: 
         currcount2 += count
-        if currcount2 > percentileCount: break
+        if currcount2 > EstimatedPercentileCount: break
         else: EstimatedSet.add(flow)
 
+    # print("size of the flow is", len(totalflow))
+    # print("size of the hashkey is", len(totalhashkey))
+    # print("size of groundTrue set", len(GroundTrueSet))
+    # print("size of Esitmated set", len(EstimatedSet))
+
+    intersectionSet = GroundTrueSet - GroundTrueSet.difference(EstimatedSet)
+    intersectionSetSize = len(intersectionSet)
+    combinedSetSize = len(GroundTrueSet) + len(EstimatedSet) - intersectionSetSize
+    accuracy = intersectionSetSize / combinedSetSize
+    # print("the Accuracy is", accuracy)
+
+    outfile = str(modSize) + "_" + str(percentile) + "_" + args.function + ".json" ## ./modsize_percentile_function.json
+
+    filehandle = open(outfile, "w")
+
+    histogram_map = {}
+
+    for i in range(modSize):
+        histogram_map[i] = len(hashKeyToFlow[i])
+        #(hashKeyToFlow[i])
     
-    #print(GroundTrueCount)
-    #print(EstimatedCount)
-    
-    #print("##############################")
-    #print(GroundTrueSet)
-    #print(EstimatedSet)
-
-    #print("##############################")
-    #print(EstimatedSet.difference(GroundTrueSet))
+    dictionary = {
+    "accuracy": accuracy,
+    "histogram_map": histogram_map
+    }
 
 
-    print("the Accuracy is", 1 - len(EstimatedSet.difference(GroundTrueSet)) / len(GroundTrueSet))
+    json.dump(dictionary, filehandle)
 
 if __name__ == '__main__':
     process_file_5min(default_file_to_work_with, 'Dataset.pkl', 60000000)
