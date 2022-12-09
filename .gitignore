@@ -10,3 +10,5 @@ Dataset_files/*.pcap
 *.tar
 Processed_files/*
 *.csv
+env/
+*.out

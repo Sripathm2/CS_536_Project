@@ -5,19 +5,26 @@ from random import random
 from collections import defaultdict
 
 # config
-depth = 4 # number of hash functions
-width = 66000
-percentile = 95
+# depth = 4 # number of hash functions
+# width = 66000
+# percentile = 95
 packet_threshold = 50000000
-file = open('/mnt/ngas/Datasets/ucsb/5tuple.csv', 'r')
 
-trafficCountGroundTrue = defaultdict(int)
-cms_heavy_hitters = defaultdict(int)
 
-def least_recently_used():
+def least_recently_used(depth, width, percentile):
+    trafficCountGroundTrue = defaultdict(int)
+    cms_heavy_hitters = defaultdict(int)
+    
     print('reading lines')
+    file = open('/home/mishra60/CS536/CS_536_Project/datasets/merged.out', 'r')
     lines = file.readlines()
+    # removing header
+    lines = lines[1:]
     #lines = lines[:10000000]
+    temp_lines = []
+    for line in tqdm(lines):
+        temp_lines.append(line[line.index(','):])
+    lines = temp_lines
     
     cm = ModifiedCountMinSketch(width, depth, packet_threshold)
 
@@ -51,6 +58,7 @@ def least_recently_used():
 
     print("size of groundTrue set", len(GroundTrueSet))
     print("size of Esitmated set", len(EstimatedSet))
+    print("stats ", depth, ' . ', width, ' . ', percentile)
     print("the Accuracy is", len(GroundTrueSet.intersection(EstimatedSet)) / (len(GroundTrueSet)+len(EstimatedSet) -len(EstimatedSet.intersection(GroundTrueSet)) ))
 
 
@@ -88,4 +96,10 @@ class ModifiedCountMinSketch(object):
 
 
 if __name__ == '__main__':
-    least_recently_used()
+    hash_number = [2,4,8,16]
+    hashset_size = [6000, 10000, 20000, 30000, 65536]
+    percentiles = [95, 99]
+    for dep in hash_number:
+        for wid in hashset_size:
+            for per in percentiles:
+                least_recently_used(dep,wid,per)
